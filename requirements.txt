@@ -1,0 +1,11 @@
+openai
+python-dotenv
+pandas
+openpyxl
+scikit-learn
+requests
+typer
+rich
+pydantic
+streamlit
+pytest

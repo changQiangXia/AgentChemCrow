@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chemcrow-lite"
+version = "0.1.0"
+description = "A ChemCrow-inspired chemistry agent with provider-agnostic tool use, safety guardrails, and a chromophore workflow."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+authors = [
+  { name = "OpenAI Codex CLI + User" }
+]
+dependencies = [
+  "openai",
+  "python-dotenv",
+  "pandas",
+  "openpyxl",
+  "scikit-learn",
+  "requests",
+  "typer",
+  "rich",
+  "pydantic",
+  "streamlit",
+]
+
+[project.scripts]
+chemcrow-lite = "chemcrow_lite.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,19 @@
+name: chemcrow-msc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - rdkit
+  - pip
+  - pip:
+      - openai
+      - python-dotenv
+      - pandas
+      - openpyxl
+      - scikit-learn
+      - requests
+      - typer
+      - rich
+      - pydantic
+      - streamlit
+      - pytest

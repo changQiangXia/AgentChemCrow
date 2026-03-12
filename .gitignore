@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+audit_logs/
+*.pyc
+ACADEMIC_REVIEW.md
+ChemCrow_reproduction_plan_zh.md
+ChemCrow.pdf
