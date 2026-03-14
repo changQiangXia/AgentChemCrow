@@ -67,6 +67,8 @@ class ChemCrowLiteAgent:
 
     def run(self, prompt: str) -> AgentRunResult:
         audit = AuditSession(question=prompt, model=self.settings.model)
+        # 在任何模型调用之前先做安全判定，便于从首步开始完整记录
+        # 拒绝、高层摘要等分流结果。
         assessment = assess_prompt_guardrails(
             prompt, self.settings.controlled_chemicals_path
         )
@@ -84,6 +86,7 @@ class ChemCrowLiteAgent:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
         ]
+        # 仅在反应分析或高层摘要模式下追加更严格的系统提示。
         if is_reaction_analysis_prompt(prompt):
             messages.append(
                 {"role": "system", "content": REACTION_CONSERVATISM_SYSTEM_NOTE}
@@ -95,6 +98,8 @@ class ChemCrowLiteAgent:
         for item in messages:
             audit.add_message(item)
 
+        # 每一轮循环对应一个 agent step：模型推理、可选工具调用、
+        # 工具结果回填，以及下一轮决策。
         for step in range(1, self.settings.max_steps + 1):
             request_payload: dict[str, Any] = dict(
                 model=self.settings.model,
@@ -110,6 +115,7 @@ class ChemCrowLiteAgent:
 
             if self.use_tools and message.tool_calls:
                 messages.append(assistant_payload)
+                # 工具在本地执行，结果会作为结构化观察写回消息流。
                 for tool_call in message.tool_calls:
                     arguments = json.loads(tool_call.function.arguments or "{}")
                     result = self.registry.execute(tool_call.function.name, arguments)
@@ -129,6 +135,7 @@ class ChemCrowLiteAgent:
                     audit.add_message(tool_payload)
                 continue
 
+            # 最终自然语言输出仍需经过安全相关清洗，再落盘并返回。
             final_answer = _coerce_content(message.content).strip()
             if assessment.response_mode == "high_level_only":
                 final_answer = sanitize_high_level_response(final_answer)
@@ -142,6 +149,7 @@ class ChemCrowLiteAgent:
                 steps=step,
             )
 
+        # 达到最大步数时执行受控停止，并保留完整审计记录。
         audit.final_answer = (
             "Stopped because the maximum number of tool-using steps was reached."
         )

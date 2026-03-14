@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-本项目不追求 1:1 复刻 `Augmenting large language models with chemistry tools` 的全部闭源组件；目标是**以可实现、可审计、可答辩的方式重建论文核心技术路线**：
+本项目以 `Augmenting large language models with chemistry tools` 的核心思想为参照，围绕**可实现、可审计、可答辩**三个目标重建论文主线：
 
 - 以 `LLM + chemistry tools` 为主线重建 agent 架构
 - 以**安全门控**约束高风险任务的输入与输出
@@ -61,18 +61,91 @@
 
 ## 技术路线与论文对应
 
-当前重点不放在“功能堆砌”，而放在“论文主线如何被重建”：
+当前文档聚焦“论文主线如何被重建”：
 
-- **论文主线 1：LLM 不直接回答化学问题**
-  - 当前实现：优先通过工具查询结构、性质、文献与风险信息
+- **论文主线 1：化学问题优先经过外部工具校验**
+  - 当前实现：优先查询结构、性质、文献与风险信息，再进入最终答案汇总
 - **论文主线 2：工具调用服务于多步推理**
-  - 当前实现：agent 在推理链中动态选择工具，并记录步骤
+  - 当前实现：agent 在有界迭代循环内接收工具 schema、执行本地工具、回填观察结果，并记录步骤
 - **论文主线 3：安全进入系统级设计**
   - 当前实现：危险请求前置门控，输出层做保守化约束
 - **论文主线 4：结果可审计、可比较**
   - 当前实现：提供审计日志、benchmark、baseline 与 rubric
 - **论文主线 5：代表性数据任务可落地**
   - 当前实现：保留 `chromophore` 小型 ML 工作流作为论文风格案例
+
+### 技术亮点解析：Agent 运行闭环
+
+以下亮点均附带仓库内的实现依据，便于答辩时从设计描述追溯到具体代码。
+
+**亮点 1：有界迭代式 Agent 闭环**
+
+实现依据：`src/chemcrow_lite/agent.py`
+
+```python
+for step in range(1, self.settings.max_steps + 1):
+    request_payload: dict[str, Any] = dict(
+        model=self.settings.model,
+        temperature=self.settings.temperature,
+        messages=messages,
+    )
+    if self.use_tools:
+        request_payload["tools"] = self.registry.openai_tools
+    response = self.client.chat.completions.create(**request_payload)
+```
+
+可归纳的实现特征：
+
+- agent 控制流采用有界迭代循环
+- 工具列表以 schema 形式注入上游 `chat.completions.create(...)`
+- 模型在给定工具集合内决定是否发起 `tool_calls`
+
+**亮点 2：工具观测驱动的逐步决策**
+
+实现依据：`src/chemcrow_lite/agent.py`
+
+```python
+if self.use_tools and message.tool_calls:
+    messages.append(assistant_payload)
+    for tool_call in message.tool_calls:
+        arguments = json.loads(tool_call.function.arguments or "{}")
+        result = self.registry.execute(tool_call.function.name, arguments)
+        tool_payload = {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "name": tool_call.function.name,
+            "content": self.registry.pretty_tool_result(result),
+        }
+        messages.append(tool_payload)
+    continue
+```
+
+可归纳的实现特征：
+
+- 工具在本地 Python 进程中执行
+- 工具输出会回填到 `messages`
+- 后续推理基于新观察结果继续展开
+- 同一轮支持多个工具调用
+
+**亮点 3：轻量编排与平铺式工具注册**
+
+实现依据：`src/chemcrow_lite/tools/registry.py`
+
+```python
+@property
+def openai_tools(self) -> list[dict[str, Any]]:
+    return [tool.as_openai_tool() for tool in self.tools.values()]
+
+def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+    try:
+        return self.tools[tool_name].handler(arguments)
+```
+
+可归纳的实现特征：
+
+- 当前实现采用平铺函数工具注册表
+- 编排层负责消息组装、工具执行、结果回填和停止条件控制
+- 当前版本保持轻量函数调用编排形态，尚未扩展到显式 DAG 规划器或符号化任务图
 
 ## 当前实现的核心模块
 
@@ -107,7 +180,7 @@
 ### 已贴合的部分
 
 - 安全优先的 agent 逻辑
-- 工具增强而非纯 LLM
+- 工具增强 + 纯 LLM 基线对照
 - 化学查询 + 安全 + 文献 + 小型 ML 工作流
 - 代表性 `chromophore` 子任务
 
@@ -254,7 +327,7 @@ streamlit run streamlit_app.py
 
 - `.env` 中的 `CHEMCROW_API_KEY`、`CHEMCROW_BASE_URL`、`CHEMCROW_MODEL`
 - 本地依赖是否在 `chemcrow-msc` 环境中安装完成
-- `Semantic Scholar` 是否因限流而显示 `warning`
+- `Semantic Scholar` 限流状态
 - 终端中是否出现 provider 返回的认证、额度或连接错误
 
 ### 6.2 Streamlit 典型操作示例
@@ -410,7 +483,7 @@ Error code: 429 - {'error': {'code': '1113', 'message': '余额不足或无可�
 
 ## 测试用例与验证结果
 
-当前测试不只覆盖“代码能否运行”，也覆盖“技术路线是否成立”。验证重点包括：
+当前测试同时覆盖“代码能否运行”和“技术路线是否成立”。验证重点包括：
 
 | 测试类别 | 代表文件 | 验证目标 |
 |---|---|---|
@@ -487,8 +560,7 @@ python -m pytest -q
    - 自动生成 `json + markdown` 双报告，便于论文写作与答辩展示
 
 4. **更扎实的 chromophore 评估**
-   - 不再只报单次切分 RMSE
-   - 现在同时报告：
+   - 当前同时报告：
      - holdout RMSE
      - 5-fold CV RMSE mean/std
      - dummy baseline 对照

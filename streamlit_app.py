@@ -7,6 +7,7 @@ from typing import Any
 
 import streamlit as st
 import streamlit.components.v1 as components
+from openai import APIStatusError
 
 from chemcrow_lite.agent import ChemCrowLiteAgent
 from chemcrow_lite.benchmarking import run_benchmark
@@ -68,6 +69,7 @@ div[data-testid="stButton"] button{min-height:44px;border-radius:999px;border:1p
 
 STATE_DEFAULTS: dict[str, Any] = {
     "agent_result": None,
+    "agent_error": None,
     "safety_result": None,
     "reaction_result": None,
     "retro_result": None,
@@ -149,6 +151,17 @@ def render_result_block(title: str, payload: Any) -> None:
     rendered = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=2)
     language = "markdown" if isinstance(payload, str) else "json"
     st.code(rendered, language=language, wrap_lines=True, height=260)
+
+
+def format_runtime_error(exc: Exception, provider_name: str) -> str:
+    if isinstance(exc, APIStatusError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 401:
+            return f"{provider_name} API authentication failed (401). Check the API key and model permission."
+        if status_code == 429:
+            return f"{provider_name} API rate limit or quota issue (429). Check quota, retry later, or switch provider."
+        return f"{provider_name} API returned status {status_code or 'unknown'}."
+    return str(exc)
 
 
 def list_reports(audit_dir: Path) -> list[Path]:
@@ -233,9 +246,15 @@ with a_ui:
     mode = st.segmented_control("Mode", options=["Tool-Augmented", "No-Tools Baseline"], default="Tool-Augmented", key="agent_mode")
     if st.button("Run Agent", key="run_agent"):
         with st.spinner("Running chemistry agent..."):
-            agent = ChemCrowLiteAgent(settings, use_tools=mode == "Tool-Augmented", system_prompt=SYSTEM_PROMPT if mode == "Tool-Augmented" else BASELINE_SYSTEM_PROMPT)
-            result = agent.run(prompt)
-        st.session_state["agent_result"] = {"answer": result.answer, "audit_path": str(result.audit_path), "steps": result.steps, "mode": mode}
+            try:
+                agent = ChemCrowLiteAgent(settings, use_tools=mode == "Tool-Augmented", system_prompt=SYSTEM_PROMPT if mode == "Tool-Augmented" else BASELINE_SYSTEM_PROMPT)
+                result = agent.run(prompt)
+                st.session_state["agent_result"] = {"answer": result.answer, "audit_path": str(result.audit_path), "steps": result.steps, "mode": mode}
+                st.session_state["agent_error"] = None
+            except Exception as exc:
+                st.session_state["agent_error"] = format_runtime_error(exc, settings.provider_name.upper())
+    if st.session_state["agent_error"]:
+        st.error(st.session_state["agent_error"])
     render_result_block("Latest agent output", st.session_state["agent_result"])
 end_showcase()
 
@@ -282,10 +301,10 @@ with r_ui:
         retro_target = st.text_input("Retrosynthesis target", key="retro_target", value="aspirin")
         if st.button("Generate Route Families", key="run_retro"):
             st.session_state["retro_result"] = retrosynthesis_overview(target=retro_target, controlled_chemicals_path=str(settings.controlled_chemicals_path))
-    rc1, rc2 = st.columns(2, gap="large")
-    with rc1:
+    result_tab_1, result_tab_2 = st.tabs(["Outcome heuristic", "Retrosynthesis overview"])
+    with result_tab_1:
         render_result_block("Outcome heuristic", st.session_state["reaction_result"])
-    with rc2:
+    with result_tab_2:
         render_result_block("Retrosynthesis overview", st.session_state["retro_result"])
 end_showcase()
 
